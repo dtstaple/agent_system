@@ -12,7 +12,11 @@ Agent layer for an IoT security testbed (Raspberry Pi zero-trust gateway; ESP32 
 - Experiments: Part A correctness/consistency/groundedness (replay.py); Part B prompt injection, misinformation, hallucination (adversarial.py); Part C access control.
 
 ## Components
-All files are comment-only skeletons (commit b8424a2): state.py, investigator.py, classifier.py, responder.py, gate.py, graph.py, replay.py, adversarial.py (empty), responder.py.
+Implemented (commits 15427e2, f43bc60; verified 2026-10-27):
+- state.py: Alert (alert_id = device@window_start, one ~10s window), EvidenceItem/Evidence (+ enrolled), Verdict, Action, GateDecision, AlertState with append-only `audit`; MAX_INVESTIGATION_ROUNDS = 2. Ground truth excluded; replay joins on alert_id.
+- investigator.py: deterministic; DEVICE_REGISTRY (MAC mapping), nearest-row lookup within 5s, baseline means, last 3 history values. Same input -> same evidence.
+- classifier.py: single Anthropic messages call (claude-sonnet-4-6), JSON -> Pydantic VerdictModel, drops/flags hallucinated citation ids; parse failure -> benign, confidence 0.
+Updated 2026-10-28: state.py (EvidenceRequest, ToolResult, Escalation, Verdict.status), investigator.py (two modes + 3 tools), classifier.py (native tool use, validation_failed), graph.py (wired). Skeleton only: responder.py, gate.py, replay.py, adversarial.py. Dependencies: req.txt (langgraph, langchain-anthropic, anthropic, pydantic, pandas, onnxruntime, ...).
 
 ## Main Flow
 (planned, from learner's description; not implemented)
@@ -20,6 +24,15 @@ alert(window, device) -> investigator -> classifier --low conf--> investigator
                                        classifier -> responder -> gate --approve--> execute (firewall: ? real or simulated)
                                                                    gate --reject--> human review
 Where alerts come from (ONNX detector output vs labels.csv windows): ?
+
+Implemented (2026-10-28): classifier evidence-request loop in the graph (graph.py: investigator -> classifier -> route_after_classifier -> investigator | human_review | END[responder placeholder]).
+investigator(initial bundle) -> classifier --tool request--> investigator(executes fixed read-only tool) -> classifier ...
+  menu: get_more_history(n<=10), get_other_source(), get_baseline_detail(column in MQTT_COLS/FEAT_COLS)
+  no device arg (runner injects alert device); unavailable -> explicit evidence item; results join valid citation ids
+  cap MAX_INVESTIGATION_ROUNDS=2; cap hit + low confidence -> human_review (same terminal as gate reject)
+  classifier writes a request key distinct from verdict; every call logged to audit (post-hoc analysis only)
+  initial bundle single primary source (ESP32 features, STM32 mqtt); low conf w/o request -> human_review; validation_failed (is_attack=None) -> human_review.
+  verdict only via submit_verdict tool (always offered), tool_choice any; no tool call -> validation_failed.
 
 ## Data and Trust Boundaries
 data/ (git-ignored CSVs, verified):
