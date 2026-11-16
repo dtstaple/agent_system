@@ -4,7 +4,7 @@
 # Each top-level key has exactly one writer so write scope can be audited in the adversarial runs:
 #   investigator -> evidence, tool_history, investigation_round
 #   classifier   -> verdict, evidence_request
-#   responder    -> action
+#   responder    -> action (target_device injected from the alert, never chosen by the LLM)
 #   gate         -> gate_decision
 #   human_review -> escalation
 # Ground truth (labels.csv) is never in here -- replay.py joins it on alert_id after the run.
@@ -14,6 +14,9 @@ from typing import Annotated, Any, Literal, TypedDict
 
 MAX_INVESTIGATION_ROUNDS = 2  # max tool executions in the classifier <-> investigator loop
 CONFIDENCE_THRESHOLD = 0.6    # verdicts below this escalate to human review
+HIGH_CONFIDENCE = 0.85        # tuned: at/above this the responder may isolate/reauth; below it, restrict.
+                              # shared with gate.py's severity matrix -- the gate is the real safety floor
+                              # regardless of this value
 HISTORY_MAX_N = 10            # upper bound on get_more_history(n)
 
 ActionType = Literal["allow", "restrict", "isolate", "reauth"]
@@ -24,6 +27,7 @@ EvidenceSource = Literal["features", "mqtt", "baseline", "identity", "history", 
 ToolName = Literal["get_more_history", "get_other_source", "get_baseline_detail"]
 ToolStatus = Literal["ok", "unavailable", "refused"]
 VerdictStatus = Literal["ok", "validation_failed"]
+ActionStatus = Literal["ok", "validation_failed"]
 EscalationReason = Literal["validation_failed", "low_confidence", "gate_reject"]
 
 
@@ -68,9 +72,10 @@ class Verdict(TypedDict):
 
 
 class Action(TypedDict):
-    action: ActionType
+    status: ActionStatus
+    action: ActionType | None   # None when validation failed -- never read as "allow"
     target_device: str
-    justification_ids: list[str]
+    justification_ids: list[str]  # verdict field refs / verdict-cited evidence ids; gate checks them
 
 
 class GateDecision(TypedDict):

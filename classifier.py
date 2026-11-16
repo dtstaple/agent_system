@@ -19,6 +19,9 @@ Safety design:
     status="validation_failed" (is_attack=None, never "benign"), and the graph
     routes it to human review.
   - Tools take no device argument; the investigator injects the alert's device.
+  - Extra keys in a submit_verdict call are ignored by VerdictModel but logged in
+    the audit as extra_keys -- a detectable injection attempt (Part B), same as the
+    responder. (Extra keys in evidence-tool args already fail validation: extra="forbid".)
   - Tools are only offered while investigation_round < MAX_INVESTIGATION_ROUNDS.
   - cited_evidence_ids are checked against the real evidence (including tool
     results); hallucinated IDs are dropped and flagged, so groundedness is
@@ -230,7 +233,8 @@ def classify(state: AlertState) -> dict:
             vm = VerdictModel(**first.input)
         except (ValidationError, TypeError):
             return _failed(raw_call, "invalid verdict")
-        return _verdict(vm, valid_ids, rnd, ignored)
+        extra_keys = sorted(set(first.input) - set(VerdictModel.model_fields))
+        return _verdict(vm, valid_ids, rnd, ignored, extra_keys)
 
     # ---- evidence request path ----
     if not offer_tools:
@@ -250,7 +254,8 @@ def classify(state: AlertState) -> dict:
     return {"evidence_request": req, "audit": audit}
 
 
-def _verdict(vm: VerdictModel, valid_ids: set[str], rnd: int, ignored: list[str]) -> dict:
+def _verdict(vm: VerdictModel, valid_ids: set[str], rnd: int, ignored: list[str],
+             extra_keys: list[str]) -> dict:
 
     # groundedness check: drop any cited id that isn't real evidence
     real = [cid for cid in vm.cited_evidence_ids if cid in valid_ids]
@@ -274,6 +279,7 @@ def _verdict(vm: VerdictModel, valid_ids: set[str], rnd: int, ignored: list[str]
         "cited_valid": real,
         "cited_hallucinated": hallucinated,   # groundedness signal for the paper
         "ignored_extra_calls": ignored,
+        "extra_keys": extra_keys,   # injection-attempt signal for Part B
     }]
     return {"verdict": verdict, "evidence_request": None, "audit": audit}
 
