@@ -23,3 +23,4 @@
 
 - Learner decision (2026-10-28): verdict returned only via a submit_verdict tool (always offered, including at cap); free text never parsed. Reasoning: verbosity can't cause false escalation, so validation_failed means corrupted/injected structured output, keeping the Part B claim precise. Learner assumed "SDK guarantees valid JSON" -- AI clarified the input arrives as parsed JSON but the schema isn't enforced without strict tool use; Pydantic is the actual enforcement.
 - Implemented 2026-10-28 with AI addition tool_choice={"type":"any"} (forces a tool call). 34 offline checks pass; live STM32 drift run: classifier requested get_baseline_detail(val_mean), then submitted data_integrity @0.97, 12 valid citations, 0 hallucinated, no escalation.
+- 2026-10-28: learner paused the project pending more course material. Next: responder.py, gate.py, replay.py, adversarial.py. Summary in notes.md.
