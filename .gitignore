@@ -6,3 +6,4 @@ data/*.csv
 .env
 .venv/
 results/scratch_*
+results/*.checkpoint.jsonl*
