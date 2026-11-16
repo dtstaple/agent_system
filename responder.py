@@ -25,6 +25,9 @@ Safety design:
   - LLM output is parsed into a Pydantic ActionModel FIRST. Malformed or
     injected output becomes status="validation_failed" (action=None, never
     "allow") and the graph routes it to human review without reaching the gate.
+    An over-long reason is truncated (reason_truncated in the audit), not
+    rejected: the gate never reads it, so verbosity must never cause an
+    escalation -- validation_failed means corrupted/injected structure only.
   - target_device is not a tool argument; it is injected from state["alert"].
     Extra keys the model supplies (e.g. a target_device) are ignored but logged
     in the audit as extra_keys -- a harmless but detectable injection attempt.
@@ -53,6 +56,7 @@ MODEL = "claude-sonnet-4-6"   # same model as the classifier, for the study
 _client = Anthropic()         # reads ANTHROPIC_API_KEY from env
 
 ACTIONS = ["allow", "restrict", "isolate", "reauth"]
+REASON_MAX = 500   # audit-only free text: over-long reasons are truncated, never rejected
 
 
 # ---------- Pydantic validation boundary (untrusted LLM output lands here) ----------
@@ -65,7 +69,7 @@ class ActionModel(BaseModel):
     # the classifier had ruled out. Not fixed on purpose: reason goes to the audit
     # only, and gate.py structurally never reads it, so a hallucination here cannot
     # reach enforcement. Containment by design, not prevention (Part B result).
-    reason: str = Field(max_length=500)
+    reason: str = Field(max_length=REASON_MAX)
 
 
 SUBMIT_ACTION_SPEC = {
@@ -76,7 +80,7 @@ SUBMIT_ACTION_SPEC = {
                          "action": {"type": "string", "enum": ACTIONS},
                          "justification_ids": {"type": "array", "items": {"type": "string"},
                                                "minItems": 1},
-                         "reason": {"type": "string", "maxLength": 500}},
+                         "reason": {"type": "string", "maxLength": REASON_MAX}},
                      "required": ["action", "justification_ids", "reason"],
                      "additionalProperties": False},
 }
@@ -106,7 +110,8 @@ reauth is acceptable if you judge the identity, not the device, is compromised).
 
 You MUST justify the action in justification_ids, citing ONLY ids from the \
 "Citable ids" list you are given: the verdict fields that drove your choice \
-and/or the evidence ids the classifier cited. Do not invent ids."""
+and/or the evidence ids the classifier cited. Do not invent ids.
+- Keep reason to at most 3 sentences."""
 
 
 def _format_verdict(v: Verdict) -> str:
@@ -163,8 +168,12 @@ def respond(state: AlertState) -> dict:
 
     first = tool_uses[0]
     raw_call = json.dumps({"tool": first.name, "input": first.input})
+    inp = dict(first.input)
+    reason_truncated = isinstance(inp.get("reason"), str) and len(inp["reason"]) > REASON_MAX
+    if reason_truncated:
+        inp["reason"] = inp["reason"][:REASON_MAX]
     try:
-        am = ActionModel(**first.input)
+        am = ActionModel(**inp)
     except (ValidationError, TypeError):
         return _failed(device, raw_call, "invalid action")
 
@@ -182,6 +191,7 @@ def respond(state: AlertState) -> dict:
         "justification_valid": [j for j in am.justification_ids if j in allowed],
         "justification_unknown": unknown,   # fabricated ids; gate.py rejects these
         "reason": am.reason,
+        "reason_truncated": reason_truncated,
         "extra_keys": extra_keys,
         "ignored_extra_calls": [json.dumps({"tool": b.name, "input": b.input})
                                 for b in tool_uses[1:]],

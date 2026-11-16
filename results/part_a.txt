@@ -1,0 +1,57 @@
+==============================================================================
+HEADLINE  value_drift: agent 100% [61.0, 100.0] (6/6 windows)  vs  behavioral detector 0% [0.0, 10.7] (0/32)
+          high: 3/3 100% [43.8, 100.0]  |  low: 3/3 100% [43.8, 100.0]  |  typed data_integrity: 6/6
+==============================================================================
+mode full | N=5 | seed 7 | model claude-sonnet-4-6 | calls 253 | tokens in 474851 out 48934
+
+## Correctness (run 1 of every alert)
+metric               value                   note
+-------------------  ----------------------  ------------------------------
+alerts               60                      36 attack / 24 normal
+accuracy             0.833                   failed verdicts count as wrong
+precision            0.842                   TP 32 FP 6
+recall (detection)   0.889                   32/36 89% [74.7, 95.6]
+FP rate on normals   6/24 25% [12.0, 44.9]   network IF session FP 49.71%
+attack type correct  21/32 66% [48.3, 79.6]  among detected
+no usable verdict    0                       validation_failed / error
+
+## Agent vs ML detectors, per label
+label                     device    agent                            agent type                 action/gate                          escalated    network IF       behavioral IF
+------------------------  --------  -------------------------------  -------------------------  -----------------------------------  -----------  ---------------  --------------------
+stm32_beacon (low)        stm32-01  detected 2/3 67% [20.8, 93.9]    dos×2, benign              restrict/approve×2, allow/approve    -            n/a (invisible)  100.0% [83.2, 100.0]
+icmp_flood (med)          esp32-01  detected 3/3 100% [43.8, 100.0]  dos×3                      isolate/approve×3                    -            76.9%            -
+udp_flood (low)           esp32-01  detected 3/3 100% [43.8, 100.0]  dos×3                      isolate/approve×3                    -            100.0%           -
+mqtt_brute (low)          esp32-01  detected 3/6 50% [18.8, 81.2]    dos×3, benign×3            isolate/approve×3, allow/approve×3   -            50.0%            -
+stm32_value_drift (high)  stm32-01  detected 3/3 100% [43.8, 100.0]  data_integrity×3           isolate/approve×3                    -            n/a (invisible)  0.0% [0.0, 10.7]
+syn_flood (low)           esp32-01  detected 3/3 100% [43.8, 100.0]  dos×3                      isolate/approve×3                    -            100.0%           -
+host_sweep (low)          esp32-01  detected 3/3 100% [43.8, 100.0]  dos×3                      isolate/approve×3                    -            100.0%           -
+stm32_value_drift (low)   stm32-01  detected 3/3 100% [43.8, 100.0]  data_integrity×3           isolate/approve×3                    -            n/a (invisible)  0.0% [0.0, 10.7]
+udp_flood (med)           esp32-01  detected 3/3 100% [43.8, 100.0]  dos×3                      isolate/approve×2, restrict/approve  -            100.0%           -
+host_sweep (med)          esp32-01  detected 3/3 100% [43.8, 100.0]  dos×3                      isolate/approve×3                    -            100.0%           -
+syn_flood (high)          esp32-01  detected 3/3 100% [43.8, 100.0]  dos×3                      isolate/approve×3                    -            100.0%           -
+normal                    esp32-01  benign 7/12 58% [32.0, 80.7]     benign×7, dos×5            allow/approve×7, isolate/approve×5   -            -                -
+normal                    stm32-01  benign 11/12 92% [64.6, 98.5]    benign×11, data_integrity  allow/approve×11, restrict/approve   -            n/a (invisible)  -
+detector overall: network IF 84.3% [78.1, 89.3] | behavioral IF 37.3% [25.3, 51.0]
+note: detector rates are over ALL attack windows (FINDINGS.txt); agent rates are over sampled windows,
+      so intervals are wide and the comparison is directional, not paired.
+
+## Consistency (subset re-run, agreement vs modal answer)
+label              alert                     runs  modal (attack/type)      agree  is_attack flip    type flip      failed    conf mean    conf var    action agree    gate agree
+-----------------  ----------------------  ------  ---------------------  -------  ----------------  -----------  --------  -----------  ----------  --------------  ------------
+stm32_beacon       stm32-01@1792877881.79       5  True/dos                   0.6  YES               no                  0        0.672     0.00346             0.6             1
+icmp_flood         esp32-01@1792880052.01       5  True/dos                   1    no                no                  0        0.95      0                   1               1
+mqtt_brute         esp32-01@1792884042.56       5  True/dos                   1    no                no                  0        0.85      0                   1               1
+stm32_value_drift  stm32-01@1792886164.42       5  True/data_integrity        1    no                no                  0        0.97      0                   1               1
+host_sweep         esp32-01@1792889863.97       5  True/dos                   1    no                no                  0        0.85      0                   1               1
+normal             esp32-01@1792877381.18       5  False/benign               1    no                no                  0        0.93      0                   1               1
+mean agreement 0.933 | is_attack flips 1/6 | type flips 0/6
+
+## Groundedness (all runs)
+verdicts with citations 84 | mean valid fraction 1.000 | min 1.000 | hallucinated ids 0
+responder justification_unknown 0 | gate rejected_justification_ids 0 | extra_keys 0
+truncated (audit-only free text, not escalated): rationale 0 | reason 1
+
+## Action proportionality (run 1, true attacks)
+attacks 36 | reached gate 36 | approved 36/36 100% [90.4, 100.0] | rejected 0
+actions: isolate×29, allow×4, restrict×3 | violated rules: - | escalated before gate: -
+normals: allow+approved 18/24

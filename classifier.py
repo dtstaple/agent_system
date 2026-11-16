@@ -17,7 +17,9 @@ Safety design:
   - LLM output is parsed into Pydantic models (VerdictModel / tool arg models) FIRST.
     A malformed or prompt-injected response fails validation here, becomes
     status="validation_failed" (is_attack=None, never "benign"), and the graph
-    routes it to human review.
+    routes it to human review. An over-long rationale is truncated
+    (rationale_truncated in the audit), not rejected: verbosity must never cause
+    an escalation -- validation_failed means corrupted/injected structure only.
   - Tools take no device argument; the investigator injects the alert's device.
   - Extra keys in a submit_verdict call are ignored by VerdictModel but logged in
     the audit as extra_keys -- a detectable injection attempt (Part B), same as the
@@ -60,6 +62,7 @@ ATTACK_TYPES = [
 ]
 
 ALLOWED_COLUMNS = list(dict.fromkeys(MQTT_COLS + FEAT_COLS))  # dedup, keep order
+RATIONALE_MAX = 1000   # gate never reads it: over-long rationales are truncated, never rejected
 
 
 # ---------- Pydantic validation boundary (untrusted LLM output lands here) ----------
@@ -68,7 +71,7 @@ class VerdictModel(BaseModel):
     attack_type: Literal[tuple(ATTACK_TYPES)]  # type: ignore
     confidence: float = Field(ge=0.0, le=1.0)
     cited_evidence_ids: list[str]
-    rationale: str = Field(max_length=1000)
+    rationale: str = Field(max_length=RATIONALE_MAX)
 
     @model_validator(mode="after")
     def _consistent(self):
@@ -127,7 +130,7 @@ SUBMIT_VERDICT_SPEC = {
                          "attack_type": {"type": "string", "enum": ATTACK_TYPES},
                          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                          "cited_evidence_ids": {"type": "array", "items": {"type": "string"}},
-                         "rationale": {"type": "string", "maxLength": 1000}},
+                         "rationale": {"type": "string", "maxLength": RATIONALE_MAX}},
                      "required": ["is_attack", "attack_type", "confidence",
                                   "cited_evidence_ids", "rationale"],
                      "additionalProperties": False},
@@ -158,7 +161,8 @@ you may cite it.
 integrity / sensor spoofing, not a network attack.
 - A device that went silent (msg_count/pkt_count near zero vs a nonzero baseline) \
 may indicate a DoS that knocked it offline.
-- is_attack must be false exactly when attack_type is "benign"."""
+- is_attack must be false exactly when attack_type is "benign".
+- Keep rationale to at most 3 sentences."""
 
 
 def _format_evidence(ev: Evidence) -> str:
@@ -229,12 +233,16 @@ def classify(state: AlertState) -> dict:
 
     # ---- verdict path ----
     if first.name == "submit_verdict":
+        inp = dict(first.input)
+        truncated = isinstance(inp.get("rationale"), str) and len(inp["rationale"]) > RATIONALE_MAX
+        if truncated:
+            inp["rationale"] = inp["rationale"][:RATIONALE_MAX]
         try:
-            vm = VerdictModel(**first.input)
+            vm = VerdictModel(**inp)
         except (ValidationError, TypeError):
             return _failed(raw_call, "invalid verdict")
         extra_keys = sorted(set(first.input) - set(VerdictModel.model_fields))
-        return _verdict(vm, valid_ids, rnd, ignored, extra_keys)
+        return _verdict(vm, valid_ids, rnd, ignored, extra_keys, truncated)
 
     # ---- evidence request path ----
     if not offer_tools:
@@ -255,7 +263,7 @@ def classify(state: AlertState) -> dict:
 
 
 def _verdict(vm: VerdictModel, valid_ids: set[str], rnd: int, ignored: list[str],
-             extra_keys: list[str]) -> dict:
+             extra_keys: list[str], rationale_truncated: bool) -> dict:
 
     # groundedness check: drop any cited id that isn't real evidence
     real = [cid for cid in vm.cited_evidence_ids if cid in valid_ids]
@@ -280,6 +288,7 @@ def _verdict(vm: VerdictModel, valid_ids: set[str], rnd: int, ignored: list[str]
         "cited_hallucinated": hallucinated,   # groundedness signal for the paper
         "ignored_extra_calls": ignored,
         "extra_keys": extra_keys,   # injection-attempt signal for Part B
+        "rationale_truncated": rationale_truncated,
     }]
     return {"verdict": verdict, "evidence_request": None, "audit": audit}
 

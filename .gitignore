@@ -5,3 +5,4 @@ data/*.csv
 .env
 .env
 .venv/
+results/scratch_*
